@@ -1,0 +1,14 @@
+# hello world
+process PlanAndMove
+{
+# define first file
+    thread Plan
+    {
+        fps = 10 ;  
+    }
+
+    thread Tracer
+    {
+        fps = 20 ;
+    }
+}

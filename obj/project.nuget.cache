@@ -1,8 +1,10 @@
 {
   "version": 2,
-  "dgSpecHash": "KnUG2YO8Paq3Y2By540UdrIE2AqF2xNyFPv9o+p1rbBMeu6dzFLWGHOpIUxyW6ccGftrLP7o7S1gXTmW2KcbeQ==",
+  "dgSpecHash": "YNH8kdVHZrlwu4oIy1lPa98I6IoHaHwuPow+tS9k64KodwnRhkbMttFpFSkPE3TcFJJk7PZPft8rdq9IOCUcHw==",
   "success": true,
   "projectFilePath": "/home/alray/workspace/TLARC_Compiler/TLARC_Compiler.csproj",
-  "expectedPackageFiles": [],
+  "expectedPackageFiles": [
+    "/home/alray/.nuget/packages/yamldotnet/16.3.0/yamldotnet.16.3.0.nupkg.sha512"
+  ],
   "logs": []
 }
