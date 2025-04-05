@@ -32,7 +32,15 @@ partial class LexicalAnalizer()
     }
     public LexTable Process(string src)
     {
-        throw new NotImplementedException();
+        LexTable lexTable = new();
+        var strs = PreProcess.Process(src).Split(' ', options: StringSplitOptions.RemoveEmptyEntries);
+        foreach (var str in strs)
+        {
+            if (_regexLex.TryMatch(str, out var type))
+                lexTable.StepNextResult(type, str);
+            else throw new NotSupportedException($"Unknow word : {str}");
+        }
+        return lexTable;
     }
     string _desciptionDirctory = "";
     string _desciptionFile = "";

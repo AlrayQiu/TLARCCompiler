@@ -32,5 +32,5 @@ lexicalAnalizer.SetDescriptionDirectory("./descriptions/")
             .SetDescriptionFile("Lexv1.yaml")
             .LoadDescription();
 
-// var srcData = lexicalAnalizer.Process(File.ReadAllText("../../../test/a.tkd"));
-// srcData.Echo();
+var srcData = lexicalAnalizer.Process(File.ReadAllText("./test/a.tkd"));
+srcData.Echo();

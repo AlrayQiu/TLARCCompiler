@@ -29,7 +29,28 @@ internal class DFANode
 {
     public int ID { get; internal set; }
     public bool ISAcceptable { get; internal set; }
-    public Dictionary<char, DFANode> Transition { get; } = [];
+    public Dictionary<char, DFANode> Transition { get; internal set; } = [];
+    public static readonly DFANodeComparer Comparer = new();
+
+    public class DFANodeComparer : IEqualityComparer<DFANode>
+    {
+        public bool Equals(DFANode? x, DFANode? y)
+        {
+            if (x == null || y == null)
+                return false;
+            return x.ISAcceptable == y.ISAcceptable && x.Transition.Keys.All(y.Transition.Keys.Contains) && y.Transition.Keys.All(x.Transition.Keys.Contains) && x.Transition.Values.All(y.Transition.Values.Contains) && y.Transition.Values.All(x.Transition.Values.Contains);
+        }
+
+        public int GetHashCode([DisallowNull] DFANode obj)
+        {
+            int hashcode = 17;
+            foreach (var i in obj.Transition)
+                hashcode = hashcode * 31 + i.Key + i.Value.ID;
+            return hashcode;
+        }
+    }
+
+
 }
 internal class DFA(DFANode start)
 {
@@ -48,6 +69,8 @@ internal class DFA(DFANode start)
                 yield return state;
                 foreach (var next in state.Transition.Values)
                 {
+                    if (visited.Contains(next))
+                        continue;
                     visited.Add(next);
                     queue.Enqueue(next);
                 }
@@ -61,6 +84,16 @@ interface IASTNode
     public NFAConnection Build();
 }
 
+internal class EplisionNode() : IASTNode
+{
+    public NFAConnection Build()
+    {
+        var start = new NFANode();
+        var end = new NFANode();
+        start.AddEpsilonClosureTransition(end);
+        return new(start, end);
+    }
+}
 internal class CharacterNode(char c) : IASTNode
 {
     public char Character => c;
@@ -191,6 +224,11 @@ internal class RegexParser(string filePath)
         {
             case '(':
                 Advance();
+                if (Peek() == ')')
+                {
+                    Advance();
+                    return new EplisionNode();
+                }
                 var expr = ParseExpression();
                 if (Peek() != ')') throw new KeyNotFoundException("Missing closing parenthesis");
                 Advance();
@@ -245,7 +283,7 @@ internal static class NfaToDfaConvertor
             }
         }
 
-        return new(initState);
+        return Minimal(new(initState));
     }
 
     private static HashSet<NFANode> Move(IEnumerable<NFANode> nodes, char symbol)
@@ -298,6 +336,17 @@ internal static class NfaToDfaConvertor
         return symbols;
     }
 
+
+    private static HashSet<char> Alphabet(DFA dfa)
+    {
+        var alphabet = new HashSet<char>();
+        foreach (var i in dfa.Nodes)
+            foreach (var j in i.Transition.Keys)
+                alphabet.Add(j);
+
+        return alphabet;
+    }
+
     private class NFASetComparer : IEqualityComparer<HashSet<NFANode>>
     {
         public bool Equals(HashSet<NFANode>? x, HashSet<NFANode>? y)
@@ -308,7 +357,146 @@ internal static class NfaToDfaConvertor
             return x.All(y.Contains) && y.All(x.Contains);
         }
 
-        public int GetHashCode([DisallowNull] HashSet<NFANode> obj) => obj.GetHashCode();
+        public int GetHashCode([DisallowNull] HashSet<NFANode> obj)
+        {
+            int hash = 17;
+            foreach (var node in obj.OrderBy(x => x.ID))
+                hash = hash * 31 + node.ID;
+            return hash;
+        }
+    }
+
+    private static DFA Minimal(in DFA dfa)
+    {
+        var partitions = new List<HashSet<DFANode>>();
+        var accepting = new HashSet<DFANode>();
+        var noAccepting = new HashSet<DFANode>();
+
+        foreach (var node in dfa.Nodes)
+            if (node.ISAcceptable)
+                accepting.Add(node);
+            else
+                noAccepting.Add(node);
+
+        if (accepting.Count > 0) partitions.Add(accepting);
+        if (noAccepting.Count > 0) partitions.Add(noAccepting);
+
+        var partitionQueue = new Queue<HashSet<DFANode>>(partitions);
+        var alphabet = Alphabet(dfa);
+        while (partitionQueue.Count > 0)
+        {
+            var current = partitionQueue.Dequeue();
+            if (current.Count <= 1)
+                continue;
+
+            foreach (var symbol in alphabet)
+            {
+                var split = SplitPrtition(current, symbol, partitions);
+                if (split != null)
+                {
+                    partitions.Remove(current);
+                    partitions.Add(split.Value.p1);
+                    partitions.Add(split.Value.p2);
+
+                    partitionQueue.Enqueue(split.Value.p1);
+                    partitionQueue.Enqueue(split.Value.p2);
+                    break;
+                }
+            }
+
+        }
+        return BuildMinimizedDFA(dfa, partitions);
+    }
+
+    private static DFA BuildMinimizedDFA(DFA dfa, List<HashSet<DFANode>> partitions)
+    {
+        var nodeMapping = new Dictionary<DFANode, DFANode>();
+        var newNodes = new List<DFANode>();
+        int idCounter = 0;
+
+
+        foreach (var partition in partitions)
+        {
+            var newNode = new DFANode()
+            {
+                ID = idCounter++,
+                ISAcceptable = partition.Any(x => x.ISAcceptable)
+            };
+
+            foreach (var node in partition)
+                nodeMapping[node] = newNode;
+
+            newNodes.Add(newNode);
+        }
+
+        foreach (var newNode in newNodes)
+        {
+            var originNode = partitions.First(x => nodeMapping[x.First()] == newNode).First();
+
+            foreach (var trans in originNode.Transition)
+                if (nodeMapping.TryGetValue(trans.Value, out var targetNewNode))
+                    newNode.Transition[trans.Key] = targetNewNode;
+        }
+
+        var newDFA = new DFA(nodeMapping[dfa.Start]);
+        do
+        {
+            Dictionary<DFANode, DFANode> dict = new(comparer: DFANode.Comparer);
+            Dictionary<DFANode, DFANode> dict2 = [];
+
+            var nodeList = newDFA.Nodes.ToList();
+            foreach (var nodes in nodeList)
+            {
+
+                if (dict.TryGetValue(nodes, out var v1))
+                    dict[nodes] = v1;
+                else dict[nodes] = nodes;
+                dict2.Add(nodes, dict[nodes]);
+            }
+            foreach (var node in nodeList)
+                foreach (var i in node.Transition)
+                    node.Transition[i.Key] = dict2[i.Value];
+
+            if (nodeList.All(newDFA.Nodes.ToList().Contains))
+                break;
+        } while (true);
+
+        return newDFA;
+    }
+
+    private static (HashSet<DFANode> p1, HashSet<DFANode> p2)? SplitPrtition(in HashSet<DFANode> partition, char symbol, List<HashSet<DFANode>> all)
+    {
+        var group = new Dictionary<HashSet<DFANode>, List<DFANode>>();
+
+        foreach (var node in partition)
+        {
+            if (!node.Transition.TryGetValue(symbol, out var targetNode))
+                targetNode = null;
+
+            var targetPartition = all.FirstOrDefault(x => targetNode != null && x.Contains(targetNode));
+
+            bool found = false;
+            foreach (var key in group.Keys)
+                if (key == targetPartition)
+                {
+                    group[key].Add(node);
+                    found = true;
+                    break;
+                }
+
+            if (!found)
+                group[targetPartition ?? []] = [node];
+
+        }
+
+        if (group.Count > 1)
+        {
+            var orderedGroups = group.Values.OrderBy(x => -x.Count).ToList();
+            var k = new HashSet<DFANode>(partition);
+            k.ExceptWith(orderedGroups[0]);
+            return ([.. orderedGroups[0]], k);
+        }
+        return null;
     }
 }
 
@@ -330,13 +518,39 @@ class RegexLex
             Console.WriteLine($"{pair.Key}:");
             foreach (var node in pair.Value.Nodes.OrderBy(x => x.ID))
             {
-                Console.Write($"State {node.ID}{(node.ISAcceptable ? "接受" : "  ")}");
+                Console.Write($"{(node.ID == pair.Value.Start.ID ? "  =>" : "")}\tState {node.ID}{(node.ISAcceptable ? "接受" : "  ")}");
                 foreach (var trans in node.Transition.OrderBy(x => x.Key))
                     Console.Write($"\t{trans.Key} -> {trans.Value.ID}");
                 Console.WriteLine();
             }
             Console.WriteLine($"===============================");
         }
+    }
+
+    public bool TryMatch(in string srcString, out string type)
+    {
+        type = "";
+        foreach (var dfa in dfas)
+        {
+            var current = dfa.Value.Start;
+            bool isbreak = false;
+            foreach (var c in srcString)
+            {
+                if (!current.Transition.TryGetValue(c, out var nextNode))
+                {
+                    isbreak = true;
+                    break;
+                }
+
+                current = nextNode;
+            }
+            if (current.ISAcceptable && !isbreak)
+            {
+                type = dfa.Key;
+                return true;
+            }
+        }
+        return false;
     }
 
 }

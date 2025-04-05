@@ -16,19 +16,13 @@ enum LexCategory
 }
 class LexTable
 {
-    public Dictionary<LexCategory, List<string>> Words { get; internal set; } = new(){
-        {LexCategory.Keyword,[]},
-        {LexCategory.Int,[]},
-        {LexCategory.Float,[]},
-        {LexCategory.String,[]},
-        {LexCategory.Identifier,[]},
-        {LexCategory.Delimiters,[]},
-        {LexCategory.CalculatorSign,[]},
-    };
-    public List<(LexCategory, int)> Rst { get; internal set; } = [];
-    public List<string> this[LexCategory category] => Words[category];
-    public void StepNextResult(LexCategory category, string data)
+    public Dictionary<string, List<string>> Words { get; internal set; } = [];
+    public List<(string, int)> Rst { get; internal set; } = [];
+    public List<string>? this[string category] => Words[category];
+    public void StepNextResult(string category, string data)
     {
+        if (!Words.ContainsKey(category))
+            Words[category] = [];
         var index = Words[category].IndexOf(data);
         if (index == -1)
         {
