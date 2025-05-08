@@ -30,7 +30,7 @@ class TerminalSymbol : Symbol
     {
         if (StaticTable.TryGetValue((type, data), out var value))
             return value;
-        var newValue = new TerminalSymbol() { Data = data, DataType = type, SymbolType = Type.Terminal, Name = type + data };
+        var newValue = new TerminalSymbol() { Data = data, DataType = type, SymbolType = Type.Terminal, Name = type + "," + data };
         StaticTable[(type, data)] = newValue;
         return newValue;
     }
@@ -46,36 +46,44 @@ class Sentence(string nonTerminalSymbolLeftName, params Symbol[] symbolsRight)
     public readonly List<Symbol> RightSymbols = [.. symbolsRight];
 }
 
-class Syntax(string name, params Sentence[] sentences)
+class Syntax
 {
+    public Syntax(string name, params Sentence[] sentences)
+    {
+        Name = name;
+        Sentences = [.. sentences];
+        foreach (var s in sentences)
+            AddSentence(s);
 
-    private readonly Dictionary<Symbol, List<Sentence>> _productionsByLeft = [];
+    }
+
+    private readonly Dictionary<string, List<Sentence>> _sentenceByLeft = [];
     public Syntax SetStartSymbol(NonTerminalSymbol symbol)
     {
         StartSymbol = symbol;
         return this;
     }
 
-    public Syntax AddSentence(Sentence production)
+    public Syntax AddSentence(Sentence sentence)
     {
-        if (!_productionsByLeft.ContainsKey(production.LeftSymbols))
+        if (!_sentenceByLeft.ContainsKey(sentence.LeftSymbols.Name))
         {
-            _productionsByLeft[production.LeftSymbols] = [];
+            _sentenceByLeft[sentence.LeftSymbols.Name] = [];
         }
-        _productionsByLeft[production.LeftSymbols].Add(production);
+        _sentenceByLeft[sentence.LeftSymbols.Name].Add(sentence);
         return this;
     }
 
     public IEnumerable<Sentence> GetSentence(Symbol leftSymbol) =>
-            _productionsByLeft.TryGetValue(leftSymbol, out var prods)
+            _sentenceByLeft.TryGetValue(leftSymbol.Name, out var prods)
             ? prods
             : Enumerable.Empty<Sentence>();
 
-    public string Name { get; init; } = name;
+    public string Name { get; init; }
 
     public static Symbol EndOfInputSymbol => TerminalSymbol.Get("EOI");
     public static Symbol EpsilonSymbol => TerminalSymbol.Get("Epsilon");
     public static Symbol? StartSymbol { get; private set; }
-    public required List<Sentence> Sentences { get; init; } = [.. sentences];
+    public List<Sentence> Sentences { get; init; }
 
 }

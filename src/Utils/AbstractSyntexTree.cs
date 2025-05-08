@@ -1,5 +1,7 @@
 
 
+namespace Tlarc.Compiler;
+
 interface IASTNode
 {
     public NFAConnection Build();
@@ -15,7 +17,7 @@ internal class EplisionNode() : IASTNode
         return new(start, end);
     }
 }
-internal class CharacterNode(string c) : IASTNode
+internal class CharacterNode(char c) : IASTNode
 {
     public char Character => c;
     public NFAConnection Build()

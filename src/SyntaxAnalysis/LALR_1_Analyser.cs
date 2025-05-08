@@ -1,8 +1,66 @@
+using System.Text;
+
 namespace Tlarc.Compiler.SyntaxAnalysis;
 
 
 class LALR1Analyser
 {
+    public static string PrintParsingTables(Dictionary<int, Dictionary<Symbol, ParseAction>> actionTable,
+     Dictionary<int, Dictionary<Symbol, int>> gotoTable)
+    {
+        var sb = new StringBuilder();
+
+        // 打印 Action 表
+        sb.AppendLine("LALR(1) Action Table:");
+        sb.AppendLine("---------------------------------------------------");
+        sb.AppendLine("State | Symbol         | Action");
+        sb.AppendLine("---------------------------------------------------");
+
+        foreach (var state in actionTable.Keys.OrderBy(k => k))
+        {
+            var actions = actionTable[state];
+            foreach (var symbol in actions.Keys.OrderBy(s => s.Name))
+            {
+                var action = actions[symbol];
+                sb.AppendLine($"{state,-5} | {FormatSymbol(symbol),-14} | {FormatAction(action)}");
+            }
+        }
+
+        // 打印 Goto 表
+        sb.AppendLine("\nLALR(1) Goto Table:");
+        sb.AppendLine("---------------------------------------------------");
+        sb.AppendLine("State | Symbol         | Goto State");
+        sb.AppendLine("---------------------------------------------------");
+
+        foreach (var state in gotoTable.Keys.OrderBy(k => k))
+        {
+            var gotos = gotoTable[state];
+            foreach (var symbol in gotos.Keys.OrderBy(s => s.Name))
+            {
+                sb.AppendLine($"{state,-5} | {FormatSymbol(symbol),-14} | {gotos[symbol]}");
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    private static string FormatSymbol(Symbol symbol)
+    {
+        return symbol.SymbolType == Symbol.Type.Terminal
+            ? $"'{symbol.Name}'"
+            : symbol.Name;
+    }
+
+    private static string FormatAction(ParseAction action)
+    {
+        return action.Type switch
+        {
+            ParseActionType.Shift => $"Shift({action.TargetState})",
+            ParseActionType.Reduce => $"Reduce({action.ReduceSentence?.ID})",
+            ParseActionType.Accept => "Accept",
+            _ => "Error"
+        };
+    }
 
     public class LrItem(Sentence sentense, int dot, Symbol lookahead)
     {
@@ -52,7 +110,7 @@ class LALR1Analyser
             new(ParseActionType.Error, -1, null);
     }
 
-
+    public static Generator Generate(Syntax syntex) => new Generator(syntex).BuildParsingTable();
 
     public enum ParseActionType { Shift, Reduce, Accept, Error }
     public class Generator(Syntax syntex)
@@ -61,8 +119,8 @@ class LALR1Analyser
         private List<LalrState> _states = new List<LalrState>();
         private Dictionary<int, Dictionary<Symbol, ParseAction>> _actionTable = [];
         private Dictionary<int, Dictionary<Symbol, int>> _gotoTable = [];
-
-
+        public Dictionary<int, Dictionary<Symbol, ParseAction>> ActionTable => _actionTable;
+        public Dictionary<int, Dictionary<Symbol, int>> GotoTable => _gotoTable;
         private string GetKernelSignature(IEnumerable<LrItem> kernel)
         {
             return string.Join("|", kernel
@@ -119,12 +177,13 @@ class LALR1Analyser
         }
         private void UpdateActionTable(LalrState currentState, Symbol terminal, LalrState targetState)
         {
-            if (!_actionTable.ContainsKey(currentState.Id))
+            if (!_actionTable.TryGetValue(currentState.Id, out Dictionary<Symbol, ParseAction>? value))
             {
-                _actionTable[currentState.Id] = new Dictionary<Symbol, ParseAction>();
+                value = [];
+                _actionTable[currentState.Id] = value;
             }
 
-            var actions = _actionTable[currentState.Id];
+            var actions = value;
 
             if (actions.TryGetValue(terminal, out var existingAction))
             {
@@ -144,11 +203,21 @@ class LALR1Analyser
                     );
                 }
             }
+            else if (targetState.KernelItems.Any(item => item.IsReduceItem && item.Sentence.LeftSymbols.Name == Syntax.StartSymbol?.Name))
+                actions[terminal] = ParseAction.Accept;
+
             else
+            {
                 actions[terminal] = ParseAction.Shift(targetState.Id);
 
-            if (targetState.KernelItems.Any(item => item.IsReduceItem && item.Sentence.LeftSymbols.Equals(Syntax.StartSymbol)))
-                actions[terminal] = ParseAction.Accept;
+                var targets = targetState.KernelItems.Where(item => item.IsReduceItem).ToList();
+                foreach (var i in targets)
+                {
+                    if (i.IsReduceItem)
+                        actions[i.Lookahead] = ParseAction.Reduce(i.Sentence);
+                }
+            }
+
         }
         private void UpdateGotoTable(LalrState currentState, Symbol nonTerminal, LalrState targetState)
         {
@@ -177,7 +246,7 @@ class LALR1Analyser
                 gotos[nonTerminal] = targetState.Id;
             }
         }
-        public void BuildParsingTable()
+        internal Generator BuildParsingTable()
         {
             // 步骤1: 构建初始状态
             var startProduction = _syntax.Sentences.First();
@@ -202,13 +271,13 @@ class LALR1Analyser
                 var transitionSymbols = currentState.KernelItems
                     .Select(i => i.NextSymbol)
                     .Where(s => s != null)
-                    .Distinct();
+                    .DistinctBy(s => s?.Name);
 
                 foreach (var symbol in transitionSymbols)
                 {
                     // 计算新状态的核心项
                     var newKernel = currentState.KernelItems
-                        .Where(i => i.NextSymbol?.Equals(symbol) == true)
+                        .Where(i => i.NextSymbol?.Name == symbol?.Name)
                         .Select(i => new LrItem(
                             i.Sentence,
                             i.DotPosition + 1,
@@ -217,12 +286,12 @@ class LALR1Analyser
                         .ToList();
 
                     // 查找或创建新状态
-                    var existingState = FindExistingState(newKernel);
+                    var newState = new LalrState(_states.Count);
+                    newState.KernelItems.UnionWith(newKernel);
+                    ComputeClosure(newState);
+                    var existingState = FindExistingState(newState.KernelItems);
                     if (existingState == null)
                     {
-                        var newState = new LalrState(_states.Count);
-                        newState.KernelItems.UnionWith(newKernel);
-                        ComputeClosure(newState);
                         _states.Add(newState);
                         stateQueue.Enqueue(newState);
                         existingState = newState;
@@ -242,9 +311,9 @@ class LALR1Analyser
 
             // 步骤3: 合并同心状态
             MergeStates();
+            return this;
         }
 
-        // 计算闭包（核心算法）
         private void ComputeClosure(LalrState state)
         {
             var itemsToProcess = new Queue<LrItem>(state.KernelItems);
@@ -287,8 +356,6 @@ class LALR1Analyser
                     break;
                 }
             }
-
-            // 如果所有符号都能推导出ε，则添加ε
             if (symbols.All(s => GetFirst(s).Any(f => f.Name == Syntax.EpsilonSymbol.Name)))
             {
                 firstSet.Add(Syntax.EpsilonSymbol);
@@ -297,8 +364,7 @@ class LALR1Analyser
             return firstSet;
         }
 
-        // 预计算符号的FIRST集合（需在Grammar类中缓存）
-        private Dictionary<Symbol, HashSet<Symbol>> _firstCache = new Dictionary<Symbol, HashSet<Symbol>>();
+        private readonly Dictionary<Symbol, HashSet<Symbol>> _firstCache = [];
 
         private HashSet<Symbol> GetFirst(Symbol symbol)
         {
@@ -314,15 +380,15 @@ class LALR1Analyser
                 return first;
             }
 
-            foreach (var prod in _syntax.GetSentence(symbol))
+            foreach (var sent in _syntax.GetSentence(symbol))
             {
-                if (prod.RightSymbols.Count == 0) // ε产生式
+                if (sent.RightSymbols.Count == 0)
                 {
                     first.Add(Syntax.EpsilonSymbol);
                     continue;
                 }
 
-                var prodFirst = ComputeFirst(prod.RightSymbols);
+                var prodFirst = ComputeFirst(sent.RightSymbols);
                 first.UnionWith(prodFirst);
             }
 
@@ -361,20 +427,5 @@ class LALR1Analyser
         }
 
         // 其他辅助方法（省略具体实现细节）...
-    }
-
-    public LALR1Analyser Build()
-    {
-        return this;
-    }
-
-    public LALR1Analyser AddSyntaxes(params Syntax[] syntaxRawDatas)
-    {
-        return this;
-    }
-
-    void CalculateFollowList()
-    {
-
     }
 }
